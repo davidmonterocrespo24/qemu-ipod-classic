@@ -15,6 +15,10 @@ out, fwp, fat, start = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 fwb = open(fwp, 'rb').read()
 fatb = open(fat, 'rb').read()
 sec = 512
+# The partition table counts complete sectors. Pad both payloads so their
+# physical offsets and lengths agree with the LBAs and sizes in the MBR.
+fwb += b'\0' * (-len(fwb) % sec)
+fatb += b'\0' * (-len(fatb) % sec)
 fw_sectors = (len(fwb) + sec - 1) // sec
 fat_start = start + fw_sectors
 fat_sectors = len(fatb) // sec
