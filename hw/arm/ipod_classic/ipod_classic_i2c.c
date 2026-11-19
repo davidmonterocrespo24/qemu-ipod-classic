@@ -24,6 +24,8 @@ static void ipod_classic_i2c_update_irq(IPodClassicI2CState *s)
 /* Arm the "one byte has gone down the wire" event. */
 static void ipod_classic_i2c_start_byte(IPodClassicI2CState *s)
 {
+    /* A new address phase must not reuse the previous byte completion. */
+    s->byte_done = false;
     timer_mod(s->byte_timer, qemu_clock_get_us(QEMU_CLOCK_VIRTUAL) +
                              S5L8702_I2C_BYTE_US);
 }
@@ -137,6 +139,7 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
 
     case S5L8702_IICSTAT: {
         uint32_t mode = value & S5L8702_IICSTAT_MODE_MASK;
+        bool was_busy = s->iicstat & S5L8702_IICSTAT_BUSY;
 
         s->iicstat = (s->iicstat & ~(S5L8702_IICSTAT_MODE_MASK |
                                      S5L8702_IICSTAT_SOE)) |
@@ -145,10 +148,13 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
 
         if (!(value & S5L8702_IICSTAT_SOE)) {
             /* Serial output off: whatever was going on is over. */
-            if (s->iicstat & S5L8702_IICSTAT_BUSY) {
+            if (was_busy) {
                 i2c_end_transfer(s->bus);
-                s->iicstat &= ~S5L8702_IICSTAT_BUSY;
             }
+            s->iicstat &= ~S5L8702_IICSTAT_BUSY;
+            timer_del(s->byte_timer);
+            s->byte_done = false;
+            s->in_address = false;
             break;
         }
 
@@ -169,11 +175,12 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
             break;
         case S5L8702_IICSTAT_STOP_TX:
         case S5L8702_IICSTAT_STOP_RX:
-            if (s->iicstat & S5L8702_IICSTAT_BUSY) {
+            /* MODE_MASK includes BUSY; the register write cleared it above. */
+            if (was_busy) {
                 i2c_end_transfer(s->bus);
-                s->iicstat &= ~S5L8702_IICSTAT_BUSY;
             }
             s->byte_done = false;
+            s->in_address = false;
             timer_del(s->byte_timer);
             s->iicstat2 |= S5L8702_IICSTAT2_STOP;
             break;
