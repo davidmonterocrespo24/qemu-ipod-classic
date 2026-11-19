@@ -306,6 +306,8 @@ static struct {
     uint32_t rate;
     uint8_t buf[1u << 20];   /* 1 MiB ~= 5.4 s @ 48000 stereo 16-bit */
     uint32_t rd, wr;         /* free-running byte counters */
+    uint8_t frame[4];        /* partial 16-bit stereo frame */
+    unsigned frame_used;
 } i2s_live;
 
 #define I2S_LIVE_MASK ((uint32_t)(sizeof(i2s_live.buf) - 1))
@@ -420,6 +422,8 @@ static void i2s_live_sample(IPodClassicI2SState *s, uint64_t value, unsigned siz
     }
     rate = i2s_sample_rate(s);
     if (rate != i2s_live.rate) {
+        /* Do not combine partial frames across a format change. */
+        i2s_live.frame_used = 0;
         i2s_live_open(rate);          /* retune to the real sample rate */
         if (!i2s_live.voice) {
             return;
@@ -429,9 +433,21 @@ static void i2s_live_sample(IPodClassicI2SState *s, uint64_t value, unsigned siz
         size = 4;
     }
     for (unsigned i = 0; i < size; i++) {
-        if (i2s_live_used() < sizeof(i2s_live.buf)) {
-            i2s_live.buf[i2s_live.wr & I2S_LIVE_MASK] = (value >> (8 * i)) & 0xff;
-            i2s_live.wr++;
+        i2s_live.frame[i2s_live.frame_used++] = (value >> (8 * i)) & 0xff;
+        if (i2s_live.frame_used == sizeof(i2s_live.frame)) {
+            /*
+             * Keep stereo frames intact even when the ring is full. Dropping
+             * only one channel would swap left/right in subsequent output.
+             * The write counter and ring size are frame-aligned, so a frame
+             * never straddles the end of the ring.
+             */
+            if (i2s_live_used() <= sizeof(i2s_live.buf) -
+                                   sizeof(i2s_live.frame)) {
+                memcpy(&i2s_live.buf[i2s_live.wr & I2S_LIVE_MASK],
+                       i2s_live.frame, sizeof(i2s_live.frame));
+                i2s_live.wr += sizeof(i2s_live.frame);
+            }
+            i2s_live.frame_used = 0;
         }
     }
     /*
@@ -700,6 +716,7 @@ static void ipod_classic_i2s_reset(DeviceState *dev)
     i2s_live.primed = false;
     i2s_live.rd = 0;
     i2s_live.wr = 0;
+    i2s_live.frame_used = 0;
 }
 
 static void ipod_classic_i2s_realize(DeviceState *dev, Error **errp)
