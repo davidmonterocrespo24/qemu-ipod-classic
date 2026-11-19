@@ -164,6 +164,8 @@ cd build && ./qemu-system-arm -M iPod-Classic \
 - `-serial null` keeps the console clean. **The firmware talks on stderr**
   (semihosting) — never discard it.
 
+[Persistent virtual disks and USB notes](tools/ipod_classic/virtual-disk-and-usb.md)
+
 ### Running the music player
 
 The player needs several environment flags, each documented in
